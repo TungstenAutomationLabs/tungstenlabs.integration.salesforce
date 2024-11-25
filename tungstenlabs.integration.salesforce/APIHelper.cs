@@ -246,7 +246,6 @@ namespace tungstenlabs.integration.salesforce
             return JsonConvert.SerializeObject(jsonObject, Formatting.Indented);
         }
 
-
         private bool IsValidJson(string input)
         {
             try
