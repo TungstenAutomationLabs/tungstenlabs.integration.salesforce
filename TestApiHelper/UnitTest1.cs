@@ -18,7 +18,7 @@ namespace TestApiHelper
         {
             string sdk = @"https://ktacloudeco-dev.ktaprt.dev.kofaxcloud.com/Services/Sdk";
             string sessionID = @"D2A967C768C7854B91C210DF77F118A4";
-            List<string> list = new List<string>() { "SFDC-ACCESS-TOKEN", "SFDC-INSTANCE-URL", "TestyTest" };
+            List<string> list = new List<string>() { "SFDC-ACCESS-TOKEN", "SFDC-INSTANCE-URL"};
 
             APIHelper aPIHelper = new APIHelper();
             ServerVariableHelper serverVariableHelper = new ServerVariableHelper();

@@ -64,6 +64,8 @@ namespace tungstenlabs.integration.salesforce
 {
     public class APIHelper
     {
+
+        #region "Public"
         public const string SV_ACCESS_TOKEN = "SFDC-ACCESS-TOKEN";
         public const string SV_INSTANCE_URL = "SFDC-INSTANCE-URL";
         public const string SV_CLIENT_ID = "SFDC-CLIENT-ID";
@@ -231,6 +233,12 @@ namespace tungstenlabs.integration.salesforce
             return responseContent;
         }
 
+        /// <summary>
+        /// Creates Event data JSON to be sent to Salesforce
+        /// </summary>
+        /// <param name="processName">API name of the platform event.</param>
+        /// <param name="relatedObject">Name of the related Salesforce object</param>
+        /// <param name="responseMessage">JSON to be sent to Salesforce.</param>
         public string BuildEventDataJson(string processName, string relatedObject, string responseMessage)
         {
             // Define the object structure
@@ -246,7 +254,127 @@ namespace tungstenlabs.integration.salesforce
             return JsonConvert.SerializeObject(jsonObject, Formatting.Indented);
         }
 
-        private bool IsValidJson(string input)
+        /// <summary>
+        /// Creates JSON with the Folder's document & document fields after extraction.
+        /// </summary>
+        /// <param name="taFolderID">TotalAgility Folder ID (Instance ID).</param>
+        /// <param name="taSdkUrl">URL for TotalAgility SDK</param>
+        /// <param name="taSessionID">TotalAgility Session ID.</param>
+        public string BuildJsonFromTAExtraction(string taFolderID, string taSdkUrl, string taSessionID)
+        {
+            var folder = GetKTAFolder(taFolderID, taSdkUrl, taSessionID);
+
+            return SimplifyJson(folder);
+        }
+
+        #endregion "Public"
+
+        #region "Private Methods"
+
+        private string SimplifyJson(string inputJson)
+        {
+            // Parse the input JSON
+            JObject jsonObject = JObject.Parse(inputJson);
+
+            // Navigate to the documents array
+            var documents = jsonObject["d"]?["Documents"] as JArray;
+            if (documents == null) return "{}";
+
+            var simplifiedDocuments = new List<object>();
+
+            // Iterate through documents
+            foreach (var document in documents)
+            {
+                // Get basic document information
+                var documentId = document["Id"]?.ToString();
+                var documentName = document["Name"]?.ToString();
+
+                // Extract fields into a dictionary
+                var fields = new Dictionary<string, object>();
+                var fieldArray = document["Fields"] as JArray;
+
+                if (fieldArray != null)
+                {
+                    // Iterate over the fields of the first document
+                    foreach (var field in fieldArray)
+                    {
+                        // Extract field name and value
+                        string fieldName = field["Name"].ToString();
+                        object fieldValue;
+
+                        // Convert value based on its type
+                        if (int.TryParse(field["Value"].ToString(), out int intValue))
+                        {
+                            fieldValue = intValue;
+                        }
+                        else if (decimal.TryParse(field["Value"].ToString(), out decimal decimalValue))
+                        {
+                            fieldValue = decimalValue;
+                        }
+                        else
+                        {
+                            fieldValue = field["Value"].ToString();
+                        }
+
+                        // Add to the simplified fields dictionary
+                        fields[fieldName] = fieldValue;
+                    }
+                }
+                // Build simplified document object
+                var simplifiedDocument = new
+                {
+                    Document = documentId,
+                    Name = documentName,
+                    Fields = fields
+                };
+
+                simplifiedDocuments.Add(simplifiedDocument);
+            }
+
+            // Build the final output JSON
+            var simplifiedJson = new
+            {
+                Documents = simplifiedDocuments
+            };
+
+            return JsonConvert.SerializeObject(simplifiedJson, Formatting.Indented);
+        }
+
+        private string GetKTAFolder(string folderID, string ktaSDKUrl, string sessionID)
+        {
+            string result = "";
+
+            try
+            {
+                //Setting the URi and calling the get document API
+                var KTAGetFolder = ktaSDKUrl + "/CaptureDocumentService.svc/json/GetFolder";
+                HttpWebRequest httpWebRequest = (HttpWebRequest)WebRequest.Create(KTAGetFolder);
+                httpWebRequest.ContentType = "application/json";
+                httpWebRequest.Method = "POST";
+
+                // CONSTRUCT JSON Payload
+                using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+                {
+                    string json = "{\"sessionId\":\"" + sessionID + "\",\"folderId\":\"" + folderID + "\" }";
+                    streamWriter.Write(json);
+                    streamWriter.Flush();
+                }
+
+                HttpWebResponse httpWebResponse = (HttpWebResponse)httpWebRequest.GetResponse();
+                using (var sr = new StreamReader(httpWebResponse.GetResponseStream()))
+                {
+                    result = sr.ReadToEnd();
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                return result;
+            }
+        }
+
+            private bool IsValidJson(string input)
         {
             try
             {
@@ -258,5 +386,7 @@ namespace tungstenlabs.integration.salesforce
                 return false;
             }
         }
+
+        #endregion "Private Methods"
     }
 }
