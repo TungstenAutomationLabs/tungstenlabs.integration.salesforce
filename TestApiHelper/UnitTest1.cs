@@ -2,9 +2,9 @@
 
 using System;
 using System.Runtime.InteropServices;
-using Newtonsoft.Json;
+//using Newtonsoft.Json;
 using tungstenlabs.integration.salesforce;
-using Newtonsoft.Json.Linq;
+//using Newtonsoft.Json.Linq;
 using System.Linq;
 using System.Collections.Generic;
 
@@ -32,9 +32,11 @@ namespace TestApiHelper
             //var instanceUrl = jsonData["instance_url"]?.ToString();
             //bool result = aPIHelper.Initialize(sfurl, clientid, clientsecret, sessionID, sdk);
 
-            string eventname = "tungstenconnect__JobResponse__e";
-            string payload = "{\r\n  \"tungstenconnect__Process_Name__c\": \"CreateAccountProcess\",\r\n  \"tungstenconnect__Related_Object__c\": \"Account\",\r\n  \"tungstenconnect__Response_Message__c\": \"{\\\"AccountName\\\":\\\"ABC Corp\\\",\\\"AccountType\\\":\\\"Customer\\\",\\\"Industry\\\":\\\"Technology\\\",\\\"AnnualRevenue\\\":5000000}\",\r\n  \"tungstenconnect__Response_Timestamp__c\": \"2024-11-10T10:00:00Z\"\r\n}";
-            var response = aPIHelper.CreatePlatformEvent(eventname, payload, sessionID, sdk);
+            //ng eventname = "tungstenconnect__JobResponse__e";
+            //string payload = "{\r\n  \"tungstenconnect__Process_Name__c\": \"CreateAccountProcess\",\r\n  \"tungstenconnect__Related_Object__c\": \"Account\",\r\n  \"tungstenconnect__Response_Message__c\": \"{\\\"AccountName\\\":\\\"ABC Corp\\\",\\\"AccountType\\\":\\\"Customer\\\",\\\"Industry\\\":\\\"Technology\\\",\\\"AnnualRevenue\\\":5000000}\",\r\n  \"tungstenconnect__Response_Timestamp__c\": \"2024-11-10T10:00:00Z\"\r\n}";
+            //var response = aPIHelper.CreatePlatformEvent(eventname, payload, sessionID, sdk);
+
+            var json = aPIHelper.BuildDocumentJsonFromTAFolder("68b42951-00a1-4782-b2d9-b25601037ea9", sdk, sessionID, "abc123");
         }
     }
 }

@@ -52,6 +52,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -59,6 +60,7 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace tungstenlabs.integration.salesforce
 {
@@ -245,7 +247,6 @@ namespace tungstenlabs.integration.salesforce
             var jsonObject = new
             {
                 tungstenconnect__Process_Name__c = processName,
-                tungstenconnect__Related_Object__c = relatedObject,
                 tungstenconnect__Response_Message__c = IsValidJson(responseMessage) ? responseMessage : JsonConvert.SerializeObject(responseMessage),
                 tungstenconnect__Response_Timestamp__c = DateTime.UtcNow.ToString("o") // ISO 8601 format
             };
@@ -260,18 +261,86 @@ namespace tungstenlabs.integration.salesforce
         /// <param name="taFolderID">TotalAgility Folder ID (Instance ID).</param>
         /// <param name="taSdkUrl">URL for TotalAgility SDK</param>
         /// <param name="taSessionID">TotalAgility Session ID.</param>
-        public string BuildJsonFromTAExtraction(string taFolderID, string taSdkUrl, string taSessionID)
+        public string BuildFolderJsonFromTAExtraction(string taFolderID, string taSdkUrl, string taSessionID)
         {
-            var folder = GetKTAFolder(taFolderID, taSdkUrl, taSessionID);
+            var folder = GetTAFolder(taFolderID, taSdkUrl, taSessionID);
 
-            return SimplifyJson(folder);
+            return SimplifyFolderJson(folder);
+        }
+
+        /// <summary>
+        /// Creates JSON with the Folder's single document & document fields after extraction.
+        /// </summary>
+        /// <param name="taFolderID">TotalAgility Folder ID (Instance ID).</param>
+        /// <param name="taSdkUrl">URL for TotalAgility SDK</param>
+        /// <param name="taSessionID">TotalAgility Session ID.</param>
+        public string BuildDocumentJsonFromTAFolder(string taFolderID, string taSdkUrl, string taSessionID, string sfDocumentId)
+        {
+            var folder = GetTAFolder(taFolderID, taSdkUrl, taSessionID);
+
+            return SimplifyFolderDocumentJson(folder, sfDocumentId, taSdkUrl, taSessionID);
+        }
+
+        /// <summary>
+        /// Creates JSON with the single document & document fields after extraction.
+        /// </summary>
+        /// <param name="taDocumentID">TotalAgility Document ID (Instance ID).</param>
+        /// <param name="taSdkUrl">URL for TotalAgility SDK</param>
+        /// <param name="taSessionID">TotalAgility Session ID.</param>
+        public string BuildDocumentJsonFromTADocument(string taDocumentID, string taSdkUrl, string taSessionID, string sfDocumentId)
+        {
+            string document = GetTADocument(taDocumentID, taSdkUrl, taSessionID);
+
+            return SimplifyDocumentJson(document, sfDocumentId, taSdkUrl, taSessionID);
+        }
+
+        /// <summary>
+        /// Creates Salesforce compatible JSON from the Base64.AI extraction result.
+        /// </summary>
+        /// <param name="base64Result">JSON String from the Base64.AI Connector</param>
+        /// <param name="taDocumentID">TotalAgility Document ID</param>
+        /// <param name="sfDocumentId">Salesforce Document ID.</param>
+        public string BuildDocumentJsonFromBase64AIResult(string base64Result, string taDocumentID, string sfDocumentId)
+        {
+            // Parse the input JSON string
+            JObject inputObj = JObject.Parse(base64Result);
+
+            // Extract FIELD1 array
+            JArray field1Array = (JArray)inputObj["FIELD1"];
+
+            // Prepare the Name_Value_Pairs dictionary
+            Dictionary<string, string> nameValuePairs = new Dictionary<string, string>();
+
+            // Populate the Name_Value_Pairs dictionary
+            foreach (var item in field1Array)
+            {
+                string key = item["Key"].ToString();
+                string value = item["Value"].ToString();
+                nameValuePairs[key] = value;
+            }
+
+            // Construct the output JSON object
+            var outputObj = new
+            {
+                OtherDocument = new
+                {
+                    SalesforceId = sfDocumentId,
+                    TungstenId = taDocumentID,
+                    DocumentName = nameValuePairs.ContainsKey("Model") ? nameValuePairs["Model"] : string.Empty,
+                    Name_Value_Pairs = nameValuePairs
+                }
+            };
+
+            // Serialize the output object to JSON string
+            string outputJson = JsonConvert.SerializeObject(outputObj, Formatting.Indented);
+            return outputJson;
         }
 
         #endregion "Public"
 
         #region "Private Methods"
 
-        private string SimplifyJson(string inputJson)
+        private string SimplifyFolderJson(string inputJson)
         {
             // Parse the input JSON
             JObject jsonObject = JObject.Parse(inputJson);
@@ -340,7 +409,133 @@ namespace tungstenlabs.integration.salesforce
             return JsonConvert.SerializeObject(simplifiedJson, Formatting.Indented);
         }
 
-        private string GetKTAFolder(string folderID, string ktaSDKUrl, string sessionID)
+        private string SimplifyFolderDocumentJson(string inputJson, string sfDocumentId, string taSdkUrl, string taSessionId)
+        {
+            string taDocumentId = "";
+
+            // Parse the input JSON into a JObject
+            JObject parsedJson = JObject.Parse(inputJson);
+
+            // Navigate to the Documents array within the JSON
+            JArray documents = (JArray)parsedJson["d"]["Documents"];
+
+            taDocumentId = documents[0]["Id"]?.ToString();
+
+            // Prepare a dictionary to hold the simplified fields
+            Dictionary<string,object> simplifiedFields = new Dictionary<string,object>();
+            simplifiedFields["SalesforceId"] = sfDocumentId;
+            simplifiedFields["TungstenId"] = taDocumentId;
+
+            //Get document type/name
+            var documentName = documents[0]["Name"]?.ToString();
+
+            // Iterate over the fields of the first document
+            foreach (var field in documents[0]["Fields"])
+            {
+                // Extract field name and value
+                string fieldName = field["Name"]?.ToString();
+                object fieldValue;
+
+                if (field["Table"]["Rows"].HasValues)
+                //if (fieldName == "Accounts")
+                //    fieldValue = JArray.Parse("[ {  \"AccountName\": \"MyAccess Checking\", \"AccountNumber\": \"0004 6280\", \"Balance\": 0.00  }, { \"AccountName\": \"Regular Sayings\", \"AccountNumber\": \"0004 8167\", \"Balance\": 56441.08 } ]");
+                    fieldValue = JArray.Parse(ConvertDatasetJson(GetTADocumentTableFieldValue(taDocumentId, fieldName, taSdkUrl, taSessionId)));
+                else 
+                {
+                    // Convert value based on its type
+                    if (int.TryParse(field["Value"]?.ToString(), out int intValue))
+                    {
+                        fieldValue = intValue;
+                    }
+                    else if (decimal.TryParse(field["Value"]?.ToString(), out decimal decimalValue))
+                    {
+                        fieldValue = decimalValue;
+                    }
+                    else
+                    {
+                        fieldValue = field["Value"]?.ToString();
+                    }
+                }
+
+                // Add to the simplified fields dictionary; do not add temporary (tmp) fields
+                if (!fieldName.StartsWith("tmp"))
+                    simplifiedFields[fieldName] = fieldValue;
+            }
+            // Create the outer object with the dynamic name
+            var simplifiedDocument = new Dictionary<string, object>
+            {
+                { documentName, simplifiedFields }
+            };
+
+            // Serialize the simplified fields dictionary into a JSON string
+            string simplifiedJson = JsonConvert.SerializeObject(simplifiedDocument, Formatting.Indented);
+
+            return simplifiedJson;
+        }
+
+        private string SimplifyDocumentJson(string document, string sfDocumentId, string taSdkUrl, string taSessionId)
+        {
+            string taDocumentId = "";
+
+            // Parse the input JSON into a JObject
+            JObject parsedJson = JObject.Parse(document);
+
+            // Navigate to the Documents array within the JSON
+            JArray documents = (JArray)parsedJson["d"];
+
+            // Prepare a dictionary to hold the simplified fields
+            Dictionary<string, object> simplifiedFields = new Dictionary<string, object>();
+            simplifiedFields["SalesforceId"] = sfDocumentId;
+            simplifiedFields["TungstenId"] = taDocumentId;
+
+            //Get document type/name
+            var documentName = documents[0]["Name"]?.ToString();
+
+            // Iterate over the fields of the first document
+            foreach (var field in documents[0]["Fields"])
+            {
+                // Extract field name and value
+                string fieldName = field["Name"]?.ToString();
+                object fieldValue;
+
+                if (field["Table"]["Rows"].HasValues)
+                    //if (fieldName == "Accounts")
+                    //    fieldValue = JArray.Parse("[ {  \"AccountName\": \"MyAccess Checking\", \"AccountNumber\": \"0004 6280\", \"Balance\": 0.00  }, { \"AccountName\": \"Regular Sayings\", \"AccountNumber\": \"0004 8167\", \"Balance\": 56441.08 } ]");
+                    fieldValue = JArray.Parse(ConvertDatasetJson(GetTADocumentTableFieldValue(taDocumentId, fieldName, taSdkUrl, taSessionId)));
+                else
+                {
+                    // Convert value based on its type
+                    if (int.TryParse(field["Value"]?.ToString(), out int intValue))
+                    {
+                        fieldValue = intValue;
+                    }
+                    else if (decimal.TryParse(field["Value"]?.ToString(), out decimal decimalValue))
+                    {
+                        fieldValue = decimalValue;
+                    }
+                    else
+                    {
+                        fieldValue = field["Value"]?.ToString();
+                    }
+                }
+
+                // Add to the simplified fields dictionary; do not add temporary (tmp) fields
+                if (!fieldName.StartsWith("tmp"))
+                    simplifiedFields[fieldName] = fieldValue;
+            }
+            // Create the outer object with the dynamic name
+            var simplifiedDocument = new Dictionary<string, object>
+            {
+                { documentName, simplifiedFields }
+            };
+
+            // Serialize the simplified fields dictionary into a JSON string
+            string simplifiedJson = JsonConvert.SerializeObject(simplifiedDocument, Formatting.Indented);
+
+            return simplifiedJson;
+        }
+
+        private string GetTAFolder(string folderID, string ktaSDKUrl, string sessionID)
         {
             string result = "";
 
@@ -374,7 +569,41 @@ namespace tungstenlabs.integration.salesforce
             }
         }
 
-            private bool IsValidJson(string input)
+        private string GetTADocumentTableFieldValue(string documentId, string tableName, string taSDKUrl, string sessionID)
+        {
+            string result = "";
+
+            try
+            {
+                //Setting the URi and calling the get document API
+                var KTAGetFolder = taSDKUrl + "/CaptureDocumentService.svc/json/GetDocumentTableFieldValue";
+                HttpWebRequest httpWebRequest = (HttpWebRequest)WebRequest.Create(KTAGetFolder);
+                httpWebRequest.ContentType = "application/json";
+                httpWebRequest.Method = "POST";
+
+                // CONSTRUCT JSON Payload
+                using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+                {
+                    string json = "{\"sessionId\":\"" + sessionID + "\",\"documentId\":\"" + documentId + "\", \"tableFieldIdentity\": { \"Name\": \"" + tableName + "\" }}";
+                    streamWriter.Write(json);
+                    streamWriter.Flush();
+                }
+
+                HttpWebResponse httpWebResponse = (HttpWebResponse)httpWebRequest.GetResponse();
+                using (var sr = new StreamReader(httpWebResponse.GetResponseStream()))
+                {
+                    result = sr.ReadToEnd();
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                return result;
+            }
+        }
+
+        private bool IsValidJson(string input)
         {
             try
             {
@@ -384,6 +613,82 @@ namespace tungstenlabs.integration.salesforce
             catch
             {
                 return false;
+            }
+        }
+
+        private string ConvertDatasetJson(string input)
+        {
+            // Parse the input JSON to get the embedded XML string
+            var jsonObject = JsonConvert.DeserializeObject<dynamic>(input);
+            string xmlData = jsonObject.d;
+
+            // Load the XML string into a DataSet
+            DataSet dataSet = new DataSet();
+            using (var reader = new StringReader(xmlData))
+            {
+                dataSet.ReadXml(reader);
+            }
+
+            // Extract the DataTable (assuming it's the first table in the dataset)
+            DataTable table = dataSet.Tables[0];
+
+            // Convert the DataTable to a JSON array
+            var records = new List<object>();
+            foreach (DataRow row in table.Rows)
+            {
+                var record = new
+                {
+                    AccountName = row["AccountName"].ToString(),
+                    AccountNumber = row["AccountNumber"].ToString(),
+                    Balance = ConvertBalance(row["Balance"].ToString())
+                };
+                records.Add(record);
+            }
+
+            // Return the JSON array as a string
+            return JsonConvert.SerializeObject(records, Formatting.Indented);
+        }
+
+        private double ConvertBalance(string balance)
+        {
+            // Remove commas and handle incorrect OCR reads
+            balance = balance.Replace(",", "").Replace("L", "").Replace("@", "8");
+            if (double.TryParse(balance, out double result))
+            {
+                return result;
+            }
+            return 0.0; // Default value if parsing fails
+        }
+
+        private string GetTADocument(string docID, string ktaSDKUrl, string sessionID)
+        {
+
+            try
+            {
+                //Setting the URi and calling the get document API
+                string KTAGetDocument = ktaSDKUrl + "/CaptureDocumentService.svc/json/GetDocument";
+                HttpClient httpClient = new HttpClient();
+                var getRequestPayload = new
+                {
+                    sessionId = sessionID,
+                    documentId = docID
+                };
+
+                var getRequestContent = new StringContent(JsonConvert.SerializeObject(getRequestPayload), Encoding.UTF8, "application/json");
+                var getResponse = httpClient.PostAsync(KTAGetDocument, getRequestContent).GetAwaiter().GetResult();
+
+                if (!getResponse.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Error fetching TA document: {getResponse.ReasonPhrase}");
+                }
+
+                var getResponseContent = getResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                return getResponseContent.ToString();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Exception GetKTADocumentFile: " + ex.ToString(), ex);
             }
         }
 
