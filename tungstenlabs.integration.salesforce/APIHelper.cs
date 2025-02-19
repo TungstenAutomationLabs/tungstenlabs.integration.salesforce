@@ -51,6 +51,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -64,6 +65,12 @@ using System.Xml.Linq;
 
 namespace tungstenlabs.integration.salesforce
 {
+    public class SFPlatformEventData
+    {
+        public string ObjectName { get; set; }
+        public object ObjectValue { get; set; }
+    }
+
     public class APIHelper
     {
 
@@ -184,9 +191,7 @@ namespace tungstenlabs.integration.salesforce
                 ServerVariableHelper serverVariableHelper = new ServerVariableHelper();
                 var sv = serverVariableHelper.GetServerVariables(taSessionId, taSdkUrl, vars);
 
-                string eventUrl = $"{sv[SV_INSTANCE_URL].Value}/services/data/v57.0/sobjects/{eventName}/";
-
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(eventUrl);
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(CombineUrls(sv[SV_INSTANCE_URL].Value, eventName));
                 request.Method = "POST";
                 request.ContentType = "application/json";
                 request.Headers["Authorization"] = $"Bearer {sv[SV_ACCESS_TOKEN].Value}";
@@ -253,6 +258,31 @@ namespace tungstenlabs.integration.salesforce
 
             // Serialize the object to JSON
             return JsonConvert.SerializeObject(jsonObject, Formatting.Indented);
+        }
+
+        /// <summary>
+        /// Creates Event data JSON to be sent to Salesforce
+        /// </summary>
+        /// <param name="data">Dictionary holding the key/value Json structure.</param>
+        public string BuildEventDataJson(List<SFPlatformEventData> data)
+        {
+            // Process the dictionary so that string values are converted as needed
+            var result = new Dictionary<string, object>();
+
+            foreach (var ed in data)
+            {
+                result[ed.ObjectName] = ProcessValue(ed.ObjectValue);
+            }
+
+            var settings = new JsonSerializerSettings
+            {
+                DateFormatHandling = DateFormatHandling.IsoDateFormat,
+                DateTimeZoneHandling = DateTimeZoneHandling.Utc,
+                // Use Formatting.Indented if you want pretty printing
+                Formatting = Formatting.Indented
+            };
+
+            return JsonConvert.SerializeObject(result, settings);
         }
 
         /// <summary>
@@ -327,7 +357,7 @@ namespace tungstenlabs.integration.salesforce
                     SalesforceId = sfDocumentId,
                     TungstenId = taDocumentID,
                     DocumentName = nameValuePairs.ContainsKey("Model") ? nameValuePairs["Model"] : string.Empty,
-                    Name_Value_Pairs = nameValuePairs
+                    Name_Value_Pairs = JsonConvert.SerializeObject(nameValuePairs, Formatting.None)
                 }
             };
 
@@ -339,6 +369,22 @@ namespace tungstenlabs.integration.salesforce
         #endregion "Public"
 
         #region "Private Methods"
+
+        private string CombineUrls(string rootUrl, string eventUrl) 
+        {
+            // Ensure rootUrl has a scheme
+            if (!rootUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !rootUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                rootUrl = "https://" + rootUrl.Trim();
+            }
+
+            // Normalize slashes
+            rootUrl = rootUrl.TrimEnd('/');
+            eventUrl = eventUrl.TrimStart('/');
+
+            return $"{rootUrl}/{eventUrl}";
+        }
 
         private string SimplifyFolderJson(string inputJson)
         {
@@ -603,6 +649,44 @@ namespace tungstenlabs.integration.salesforce
             }
         }
 
+        private object ProcessValue(object value)
+        {
+            if (value is string s)
+            {
+                if (IsValidJson(s))
+                    return JsonConvert.SerializeObject(s);
+
+                // Try converting to an integer
+                if (int.TryParse(s, out int intValue))
+                    return intValue;
+
+                // Try converting to a decimal
+                if (decimal.TryParse(s, out decimal decimalValue))
+                    return decimalValue;
+
+                // Try converting to a DateTime
+                if (DateTime.TryParse(s, out DateTime dateValue))
+                    return dateValue;
+
+                // If no conversion applies, return the original string
+                return s;
+            }
+            // If the value is a list of objects, process each element in the list
+            else if (value is IEnumerable<object> list)
+            {
+                var newList = new List<object>();
+                foreach (var item in list)
+                {
+                    newList.Add(ProcessValue(item));
+                }
+                return newList;
+            }
+
+            // For any other type, return the value as-is
+            return value;
+
+        }
+
         private bool IsValidJson(string input)
         {
             try
@@ -652,7 +736,7 @@ namespace tungstenlabs.integration.salesforce
         private double ConvertBalance(string balance)
         {
             // Remove commas and handle incorrect OCR reads
-            balance = balance.Replace(",", "").Replace("L", "").Replace("@", "8");
+            balance = balance.Replace(",", "").Replace("L", "1").Replace("@", "8");
             if (double.TryParse(balance, out double result))
             {
                 return result;
