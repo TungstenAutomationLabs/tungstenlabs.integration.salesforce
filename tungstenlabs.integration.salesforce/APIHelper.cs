@@ -653,8 +653,8 @@ namespace tungstenlabs.integration.salesforce
         {
             if (value is string s)
             {
-                if (IsValidJson(s))
-                    return JsonConvert.SerializeObject(s);
+                //if (IsValidJson(s))
+                //    return JsonConvert.SerializeObject(s);
 
                 // Try converting to an integer
                 if (int.TryParse(s, out int intValue))
